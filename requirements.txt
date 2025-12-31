@@ -1,4 +1,8 @@
+fastapi
+uvicorn
 mlflow
 scikit-learn
-numpy
 pandas
+numpy
+evidently==0.4.18
+requests

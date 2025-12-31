@@ -1,108 +1,94 @@
+import os
 import mlflow
 import mlflow.sklearn
-import numpy as np
 import pandas as pd
 
-from sklearn.metrics import accuracy_score, f1_score
-from data import generate_data
-from models import get_models
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score
 
-# ==========================
+from mlflow.models.signature import infer_signature
+
+# =========================
 # CONFIG
-# ==========================
-EXPERIMENT_NAME = "Multi_Model_Training"
-REGISTERED_MODEL_NAME = "demo_classifier"
-ACCURACY_GATE = 0.85
+# =========================
+MODEL_NAME = "demo_classifier"
+N_FEATURES = 15
+FEATURE_NAMES = [f"feature_{i}" for i in range(N_FEATURES)]
 
-mlflow.set_experiment(EXPERIMENT_NAME)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ==========================
-# DATA
-# ==========================
-X_train, X_test, y_train, y_test = generate_data()
+TRAINING_DATA_PATH = os.path.join(BASE_DIR, "training_data.csv")
+MODEL_EXPORT_PATH = os.path.join(BASE_DIR, "model")  # 🔥 bundled model
 
-# ==========================
-# SAVE TRAINING BASELINE (FOR DRIFT)
-# ==========================
-train_df = pd.DataFrame(
-    X_train,
-    columns=[f"feature_{i}" for i in range(X_train.shape[1])]
+# MLflow only for tracking (local)
+mlflow.set_tracking_uri("sqlite:///mlflow.db")
+mlflow.set_experiment("demo_classifier_experiment")
+
+# =========================
+# GENERATE DATA
+# =========================
+X, y = make_classification(
+    n_samples=2000,
+    n_features=N_FEATURES,
+    n_informative=8,
+    n_redundant=2,
+    n_classes=2,
+    random_state=42,
 )
-train_df.to_csv("training_data.csv", index=False)
 
-# ==========================
-# MODELS
-# ==========================
-models = get_models()
-results = {}
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
 
-best_run = None
-best_acc = 0.0
+X_train_df = pd.DataFrame(X_train, columns=FEATURE_NAMES)
+X_test_df = pd.DataFrame(X_test, columns=FEATURE_NAMES)
 
-# ==========================
-# TRAINING LOOP
-# ==========================
-for name, model in models.items():
+# Save training data (for drift later)
+train_df = X_train_df.copy()
+train_df["target"] = y_train
+train_df.to_csv(TRAINING_DATA_PATH, index=False)
 
-    with mlflow.start_run(run_name=name) as run:
+# =========================
+# TRAIN MODEL
+# =========================
+model = KNeighborsClassifier(n_neighbors=5)
+model.fit(X_train_df, y_train)
 
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
+# =========================
+# EVALUATE
+# =========================
+y_pred = model.predict(X_test_df)
+accuracy = accuracy_score(y_test, y_pred)
 
-        acc = accuracy_score(y_test, preds)
-        f1 = f1_score(y_test, preds)
+# =========================
+# LOG + EXPORT MODEL
+# =========================
+with mlflow.start_run() as run:
+    mlflow.log_param("model_type", "KNN")
+    mlflow.log_param("n_neighbors", 5)
+    mlflow.log_param("n_features", N_FEATURES)
+    mlflow.log_metric("accuracy", accuracy)
 
-        # ---- Log params ----
-        mlflow.log_param("model_name", name)
-        for p, v in model.get_params().items():
-            mlflow.log_param(p, v)
+    signature = infer_signature(X_train_df, model.predict(X_train_df))
+    input_example = X_train_df.iloc[:5]
 
-        # ---- Log metrics ----
-        mlflow.log_metric("accuracy", acc)
-        mlflow.log_metric("f1_score", f1)
-
-        # ---- Drift baseline stats ----
-        mlflow.log_metric("feature_mean", float(np.mean(X_train)))
-        mlflow.log_metric("feature_std", float(np.std(X_train)))
-
-        # ---- Log model ----
-        mlflow.sklearn.log_model(model, artifact_path="model")
-
-        print(f"{name} | accuracy={acc:.4f}")
-
-        # ==========================
-        # METRIC GATE
-        # ==========================
-        if acc >= ACCURACY_GATE:
-            print(f"✅ {name} passed metric gate")
-
-            model_uri = f"runs:/{run.info.run_id}/model"
-            mv = mlflow.register_model(
-                model_uri=model_uri,
-                name=REGISTERED_MODEL_NAME
-            )
-
-            if acc > best_acc:
-                best_acc = acc
-                best_run = mv
-        else:
-            print(f"❌ {name} failed metric gate")
-
-# ==========================
-# PROMOTE BEST MODEL
-# ==========================
-if best_run:
-    client = mlflow.tracking.MlflowClient()
-    client.transition_model_version_stage(
-        name=REGISTERED_MODEL_NAME,
-        version=best_run.version,
-        stage="Staging",
-        archive_existing_versions=True
+    # Log to MLflow (tracking only)
+    mlflow.sklearn.log_model(
+        sk_model=model,
+        artifact_path="model",
+        signature=signature,
+        input_example=input_example,
     )
 
-    print(
-        f"\n🏆 Model v{best_run.version} promoted to STAGING "
-        f"(accuracy={best_acc:.4f})"
+    # 🔥 EXPORT MODEL LOCALLY (KEY FIX)
+    mlflow.sklearn.save_model(
+        sk_model=model,
+        path=MODEL_EXPORT_PATH,
+        signature=signature,
+        input_example=input_example,
     )
-else:
-    print("\n❌ No model passed metric gate")
+
+    print(f"✅ Model trained | accuracy={accuracy:.4f}")
+    print(f"📦 Model exported to: {MODEL_EXPORT_PATH}")
