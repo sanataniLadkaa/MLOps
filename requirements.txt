@@ -3,6 +3,6 @@ uvicorn
 mlflow
 scikit-learn
 pandas
-numpy
+numpy<2.0
 evidently==0.4.18
 requests

@@ -1,6 +1,10 @@
 from fastapi.testclient import TestClient
-from app import app
+import sys
+import os
 
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from app import app
 client = TestClient(app)
 
 def test_predict():
