@@ -8,10 +8,8 @@ import os
 # =========================
 # CONFIG
 # =========================
-MODEL_NAME = "demo_classifier"
-MODEL_STAGE = os.getenv("MODEL_STAGE", "Staging")  # default safe stage
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "model")
 LIVE_DATA_PATH = os.path.join(BASE_DIR, "live_predictions.csv")
 
 FEATURE_NAMES = [f"feature_{i}" for i in range(15)]
@@ -21,34 +19,35 @@ FEATURE_NAMES = [f"feature_{i}" for i in range(15)]
 # =========================
 app = FastAPI(
     title="ML Inference Service",
-    description="Stable MLflow inference service",
+    description="Bundled MLflow model inference",
     version="1.0.0",
 )
 
 # =========================
-# LOAD MODEL SAFELY
+# LOAD MODEL (ONCE)
 # =========================
-model = None
-
-def load_model():
-    global model
-    try:
-        # model_uri = f"models:/{MODEL_NAME}/{MODEL_STAGE}"
-        model = mlflow.pyfunc.load_model("model")
-        # print(f"✅ Loaded model: {model_uri}")
-    except Exception as e:
-        print(f"❌ Model load failed: {e}")
-        model = None
-
-@app.on_event("startup")
-def startup_event():
-    load_model()
+try:
+    model = mlflow.pyfunc.load_model(MODEL_PATH)
+    print("✅ Model loaded successfully")
+except Exception as e:
+    print(f"❌ Failed to load model: {e}")
+    model = None
 
 # =========================
 # INPUT SCHEMA
 # =========================
 class PredictionInput(BaseModel):
     features: List[float]
+
+# =========================
+# HEALTH CHECK (IMPORTANT)
+# =========================
+@app.get("/")
+def health():
+    return {
+        "status": "ok",
+        "model_loaded": model is not None
+    }
 
 # =========================
 # PREDICT ENDPOINT
@@ -58,8 +57,8 @@ def predict(data: PredictionInput):
 
     if model is None:
         raise HTTPException(
-            status_code=503,
-            detail="Model not available. Check MLflow registry."
+            status_code=500,
+            detail="Model not loaded"
         )
 
     if len(data.features) != len(FEATURE_NAMES):
@@ -68,11 +67,7 @@ def predict(data: PredictionInput):
             detail=f"Expected {len(FEATURE_NAMES)} features, got {len(data.features)}"
         )
 
-    input_df = pd.DataFrame(
-        [data.features],
-        columns=FEATURE_NAMES
-    )
-
+    input_df = pd.DataFrame([data.features], columns=FEATURE_NAMES)
     prediction = int(model.predict(input_df)[0])
 
     log_df = input_df.copy()
