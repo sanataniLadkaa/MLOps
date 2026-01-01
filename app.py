@@ -7,9 +7,6 @@ import mlflow.pyfunc
 import pandas as pd
 import os
 
-# =========================
-# CONFIG
-# =========================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "model")
 LIVE_DATA_PATH = os.path.join(BASE_DIR, "live_predictions.csv")
@@ -17,75 +14,51 @@ LIVE_DATA_PATH = os.path.join(BASE_DIR, "live_predictions.csv")
 FEATURE_NAMES = [f"feature_{i}" for i in range(15)]
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# =========================
-# FASTAPI APP
-# =========================
 app = FastAPI(
     title="ML Inference Service",
-    description="Bundled MLflow model inference",
+    description="Stable MLflow inference service",
     version="1.0.0",
 )
 
-# =========================
-# LOAD MODEL (ONCE)
-# =========================
+# Load model
 try:
     model = mlflow.pyfunc.load_model(MODEL_PATH)
-    print("✅ Model loaded successfully")
+    print("✅ Model loaded")
 except Exception as e:
-    print(f"❌ Failed to load model: {e}")
+    print("❌ Model load failed:", e)
     model = None
 
-# =========================
-# INPUT SCHEMA
-# =========================
 class PredictionInput(BaseModel):
     features: List[float]
 
-# =========================
-# ROOT → UI (IMPORTANT)
-# =========================
 @app.get("/", response_class=HTMLResponse)
 def ui(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse("index.html", {"request": request})
 
-# =========================
-# HEALTH CHECK (FOR RENDER)
-# =========================
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "model_loaded": model is not None
-    }
+    return {"status": "ok", "model_loaded": model is not None}
 
-# =========================
-# PREDICT ENDPOINT
-# =========================
 @app.post("/predict")
 def predict(data: PredictionInput):
-
     if model is None:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
     if len(data.features) != len(FEATURE_NAMES):
         raise HTTPException(
             status_code=400,
-            detail=f"Expected {len(FEATURE_NAMES)} features, got {len(data.features)}"
+            detail=f"Expected {len(FEATURE_NAMES)} features"
         )
 
-    input_df = pd.DataFrame([data.features], columns=FEATURE_NAMES)
-    prediction = int(model.predict(input_df)[0])
+    df = pd.DataFrame([data.features], columns=FEATURE_NAMES)
+    pred = int(model.predict(df)[0])
 
-    log_df = input_df.copy()
-    log_df["prediction"] = prediction
+    df["prediction"] = pred
+    df.to_csv(
+        LIVE_DATA_PATH,
+        mode="a",
+        header=not os.path.exists(LIVE_DATA_PATH),
+        index=False
+    )
 
-    if os.path.exists(LIVE_DATA_PATH):
-        log_df.to_csv(LIVE_DATA_PATH, mode="a", header=False, index=False)
-    else:
-        log_df.to_csv(LIVE_DATA_PATH, index=False)
-
-    return {"prediction": prediction}
+    return {"prediction": pred}
