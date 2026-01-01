@@ -25,6 +25,6 @@ jobs:
       run: |
         python drift_check.py
 
-    - name: Retrain if Drift Detected
-      run: |
-        python retrain.py
+    # - name: Retrain if Drift Detected
+    #   run: |
+    #     python retrain.py
