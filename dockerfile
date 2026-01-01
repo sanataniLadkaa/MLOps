@@ -7,7 +7,6 @@ WORKDIR /app
 # Copy requirements first (better caching)
 COPY requirements.txt .
 COPY templates ./templates
-COPY templates ./templates
 
 COPY model /app/model
 
@@ -21,4 +20,4 @@ COPY . .
 EXPOSE 8000
 
 # Start FastAPI app
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port $PORT"]
